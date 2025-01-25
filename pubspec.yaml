@@ -1,0 +1,43 @@
+name: waste_sorting_assistant
+description: A Flutter project to assist with waste sorting using image recognition.
+
+publish_to: 'none' # Prevents publishing to pub.dev
+
+version: 1.0.0
+
+environment:
+  sdk: ">=3.2.1 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: ^3.10.1 # Firebase core setup
+  firebase_auth: ^5.4.1 # Firebase authentication (if you plan to add user sign-up/login)
+  cloud_firestore: ^5.6.2 # Firebase Firestore for storing data
+  google_ml_kit: ^0.19.0 # ML Kit for image recognition (Google Vision API)
+  provider: ^6.1.2 # State management
+  cupertino_icons: ^1.0.2 # iOS styled icons
+  image_picker: ^1.1.2 # Image picker to allow users to take/upload images for waste items
+  flutter_local_notifications: ^18.0.1 # Local notifications (for reminders or updates)
+  fluttertoast: ^8.2.10 # Toast notifications for alerts or messages
+  cached_network_image: ^3.4.1 # For loading images from the network (if needed)
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+#  assets:
+#    - assets/images/ # Path to any images you might include (like icons, logos)
+#  fonts:
+#    - family: GoogleSans
+#      fonts:
+#        - asset: assets/fonts/GoogleSans-Regular.ttf
+#  plugin:
+#    platforms:
+#      android:
+#        package: com.example.waste_sorting_assistant
+#        pluginClass: WasteSortingAssistantPlugin
+#      ios:
+#        pluginClass: WasteSortingAssistantPlugin
