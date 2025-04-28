@@ -2,18 +2,13 @@ import '../../domain/entities/user.dart';
 
 class UserModel extends User {
   const UserModel({
-    required String id,
-    required String name,
-    required String email,
-    required String profileImageUrl,
-    required List<String> favoriteItems,
-  }) : super(
-    id: id,
-    name: name,
-    email: email,
-    profileImageUrl: profileImageUrl,
-    favoriteItems: favoriteItems,
-  );
+    required super.id,
+    required super.name,
+    required super.email,
+    required String super.profileImageUrl,
+    required super.favoriteItems,
+    required super.createdAt,
+  });
 
   /// Converts a JSON object into a UserModel
   factory UserModel.fromJson(Map<String, dynamic> json) {
@@ -23,6 +18,8 @@ class UserModel extends User {
       email: json['email'] as String,
       profileImageUrl: json['profile_image_url'] as String? ?? '',
       favoriteItems: List<String>.from(json['favorite_items'] ?? []),
+      createdAt: DateTime.parse(json['created_at'] as String),
+
     );
   }
 
@@ -34,6 +31,7 @@ class UserModel extends User {
       'email': email,
       'profile_image_url': profileImageUrl,
       'favorite_items': favoriteItems,
+      'created_at': createdAt.toIso8601String(),
     };
   }
 

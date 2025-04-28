@@ -2,20 +2,13 @@ import '../../domain/entities/waste_item.dart';
 
 class WasteItemModel extends WasteItem {
   const WasteItemModel({
-    required String id,
-    required String name,
-    required String category,
-    required String description,
-    required String disposalMethod,
-    required String imageUrl,
-  }) : super(
-    id: id,
-    name: name,
-    category: category,
-    description: description,
-    disposalMethod: disposalMethod,
-    imageUrl: imageUrl,
-  );
+    required super.id,
+    required super.name,
+    required super.category,
+    required super.description,
+    required super.disposalMethod,
+    required super.imageUrl,
+  });
 
   /// Converts a JSON object into a WasteItemModel
   factory WasteItemModel.fromJson(Map<String, dynamic> json) {
