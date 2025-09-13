@@ -297,7 +297,7 @@ class AppThemeData {
         shape: RoundedRectangleBorder(
           borderRadius: AppStyles.mediumBorderRadius,
         ),
-        shadowColor: AppColors.black.withOpacity(0.5),
+        shadowColor: AppColors.black.withValues(alpha: 0.5),
       ),
 
       // Elevated Button Theme

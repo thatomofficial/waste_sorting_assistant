@@ -64,7 +64,7 @@ class AppStrings {
   static const String correctlySorted = 'Correctly Sorted';
   static const String accuracyRate = 'Accuracy Rate';
   static const String itemsSaved = 'Items Saved';
-  static const String co2Saved = 'CO‚ Saved';
+  static const String co2Saved = 'CO2 Saved';
   static const String weeklyGoal = 'Weekly Goal';
   static const String monthlyStats = 'Monthly Statistics';
 

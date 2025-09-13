@@ -36,9 +36,7 @@ class _CustomLoaderState extends State<CustomLoader>
     with TickerProviderStateMixin {
   late AnimationController _primaryController;
   late AnimationController _secondaryController;
-  late Animation<double> _rotationAnimation;
   late Animation<double> _scaleAnimation;
-  late Animation<double> _opacityAnimation;
 
   @override
   void initState() {
@@ -58,14 +56,6 @@ class _CustomLoaderState extends State<CustomLoader>
       vsync: this,
     );
 
-    _rotationAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _primaryController,
-      curve: Curves.linear,
-    ));
-
     _scaleAnimation = Tween<double>(
       begin: 0.0,
       end: 1.0,
@@ -74,13 +64,6 @@ class _CustomLoaderState extends State<CustomLoader>
       curve: Curves.easeInOut,
     ));
 
-    _opacityAnimation = Tween<double>(
-      begin: 0.3,
-      end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _secondaryController,
-      curve: Curves.easeInOut,
-    ));
   }
 
   void _startAnimations() {
@@ -148,7 +131,7 @@ class _CustomLoaderState extends State<CustomLoader>
 
     if (widget.showBackground) {
       return Container(
-        color: widget.backgroundColor ?? Colors.black.withOpacity(0.5),
+        color: widget.backgroundColor ?? Colors.black.withValues(alpha: 0.5),
         child: Center(child: content),
       );
     }
@@ -177,7 +160,7 @@ class _CustomLoaderState extends State<CustomLoader>
         valueColor: AlwaysStoppedAnimation<Color>(
           widget.color ?? AppColors.primaryGreen,
         ),
-        backgroundColor: (widget.color ?? AppColors.primaryGreen).withOpacity(0.2),
+        backgroundColor: (widget.color ?? AppColors.primaryGreen).withValues(alpha: 0.2),
       ),
     );
   }
@@ -203,7 +186,7 @@ class _CustomLoaderState extends State<CustomLoader>
                   height: _getDotSize(),
                   decoration: BoxDecoration(
                     color: (widget.color ?? AppColors.primaryGreen)
-                        .withOpacity(opacity),
+                        .withValues(alpha: opacity),
                     shape: BoxShape.circle,
                   ),
                 ),

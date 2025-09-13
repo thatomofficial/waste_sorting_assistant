@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
-import 'package:waste_sorting_assistant/presentation/screens/home/home_screen.dart';
 import 'package:waste_sorting_assistant/presentation/theme/theme_data.dart';
 import 'package:waste_sorting_assistant/presentation/routes/app_routes.dart';
-import 'package:waste_sorting_assistant/core/constants/app_strings.dart';
+import 'core/constants/app_strings.dart';
 
 // Import firebase options when available
 // import 'firebase_options.dart';
