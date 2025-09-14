@@ -20,7 +20,9 @@ class Helpers {
   // Format numbers with commas
   static String formatNumber(num number) {
     final formatter = RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))');
-    return number.toString().replaceAllMapped(formatter, (match) => '${match[1]},');
+    return number
+        .toString()
+        .replaceAllMapped(formatter, (match) => '${match[1]},');
   }
 
   // Format percentage
@@ -79,7 +81,11 @@ class Helpers {
   }
 
   // Truncate text with ellipsis
-  static String truncateText(String text, int maxLength, {String suffix = '...'}) {
+  static String truncateText(
+    String text,
+    int maxLength, {
+    String suffix = '...',
+  }) {
     if (text.length <= maxLength) return text;
     return '${text.substring(0, maxLength - suffix.length)}$suffix';
   }
@@ -99,16 +105,23 @@ class Helpers {
 
   // Generate random string
   static String generateRandomString(int length) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const chars =
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     final random = Random();
     return String.fromCharCodes(
-      Iterable.generate(length, (_) => chars.codeUnitAt(random.nextInt(chars.length))),
+      Iterable.generate(
+        length,
+        (_) => chars.codeUnitAt(random.nextInt(chars.length)),
+      ),
     );
   }
 
   // Debouncer for search
   static Timer? _debounceTimer;
-  static void debounce(VoidCallback callback, {Duration duration = const Duration(milliseconds: 500)}) {
+  static void debounce(
+    VoidCallback callback, {
+    Duration duration = const Duration(milliseconds: 500),
+  }) {
     _debounceTimer?.cancel();
     _debounceTimer = Timer(duration, callback);
   }
@@ -119,7 +132,11 @@ class Helpers {
   }
 
   // Get theme-appropriate color
-  static Color getThemedColor(BuildContext context, Color lightColor, Color darkColor) {
+  static Color getThemedColor(
+    BuildContext context,
+    Color lightColor,
+    Color darkColor,
+  ) {
     return isDarkMode(context) ? darkColor : lightColor;
   }
 
@@ -365,7 +382,7 @@ class Helpers {
   // Calculate CO2 savings based on waste type and amount
   static double calculateCO2Savings(String wasteType, double weightInKg) {
     // CO2 savings per kg for different waste types (approximate values)
-    final Map<String, double> co2FactorPerKg = {
+    final co2FactorPerKg = <String, double>{
       'paper': 3.3, // kg CO2 saved per kg of paper recycled
       'plastic': 2.0,
       'glass': 0.2,

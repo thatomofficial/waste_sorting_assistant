@@ -1,0 +1,40 @@
+# Code Owners for Waste Sorting Assistant
+# These users will be requested for review when someone opens a pull request
+
+# Global code owners
+* @thatomofficial
+
+# Core architecture and utilities
+/lib/core/ @thatomofficial
+/lib/domain/ @thatomofficial
+
+# Data layer
+/lib/data/ @thatomofficial
+
+# Services
+/lib/services/ @thatomofficial
+
+# Presentation layer
+/lib/presentation/ @thatomofficial
+
+# Configuration files
+/.github/ @thatomofficial
+/analysis_options.yaml @thatomofficial
+/pubspec.yaml @thatomofficial
+
+# Build and deployment
+/scripts/ @thatomofficial
+/android/ @thatomofficial
+/ios/ @thatomofficial
+
+# Documentation
+/README.md @thatomofficial
+/docs/ @thatomofficial
+
+# Tests
+/test/ @thatomofficial
+/integration_test/ @thatomofficial
+
+# Firebase configuration
+/android/app/google-services.json @thatomofficial
+/ios/Runner/GoogleService-Info.plist @thatomofficial

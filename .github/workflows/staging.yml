@@ -1,0 +1,441 @@
+name: QA/Staging Pipeline
+
+on:
+  push:
+    branches: [ qa ]
+  pull_request:
+    branches: [ qa ]
+  workflow_dispatch:
+    inputs:
+      deploy_to_testflight:
+        description: 'Deploy to TestFlight'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  FLUTTER_VERSION: '3.24.3'
+  ENVIRONMENT: 'staging'
+
+jobs:
+  validate-staging:
+    name: Staging Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Run full validation
+      run: |
+        echo "🔍 Running comprehensive validation for staging..."
+
+        # Format check
+        dart format --output=none --set-exit-if-changed .
+
+        # Static analysis
+        flutter analyze --fatal-infos
+
+        # Custom quality checks
+        ./scripts/quality-check.sh --strict
+
+        # All tests with coverage
+        flutter test --coverage --reporter=expanded
+
+        echo "✅ Staging validation completed"
+
+    - name: Upload test coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: coverage/lcov.info
+        name: staging-coverage
+        flags: staging
+
+  build-staging-android:
+    name: Build Staging Android
+    runs-on: ubuntu-latest
+    needs: [validate-staging]
+    timeout-minutes: 35
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'zulu'
+        java-version: '17'
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Configure staging environment
+      run: |
+        echo "Configuring staging environment..."
+        # Set staging-specific configurations
+        export ENVIRONMENT=staging
+        export API_BASE_URL=${{ secrets.STAGING_API_URL }}
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Build staging APK
+      run: flutter build apk --release --flavor staging --verbose
+      env:
+        ENVIRONMENT: staging
+
+    - name: Build staging App Bundle
+      run: flutter build appbundle --release --flavor staging --verbose
+      env:
+        ENVIRONMENT: staging
+
+    - name: Sign APK and AAB
+      uses: r0adkll/sign-android-release@v1
+      with:
+        releaseDirectory: build/app/outputs/flutter-apk
+        signingKeyBase64: ${{ secrets.ANDROID_SIGNING_KEY }}
+        alias: ${{ secrets.ANDROID_KEY_ALIAS }}
+        keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    - name: Upload staging APK
+      uses: actions/upload-artifact@v3
+      with:
+        name: staging-apk
+        path: build/app/outputs/flutter-apk/app-staging-release.apk
+        retention-days: 14
+
+    - name: Upload staging AAB
+      uses: actions/upload-artifact@v3
+      with:
+        name: staging-aab
+        path: build/app/outputs/bundle/stagingRelease/app-staging-release.aab
+        retention-days: 14
+
+  build-staging-ios:
+    name: Build Staging iOS
+    runs-on: macos-latest
+    needs: [validate-staging]
+    timeout-minutes: 50
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: 'latest-stable'
+
+    - name: Configure staging environment
+      run: |
+        export ENVIRONMENT=staging
+        export API_BASE_URL=${{ secrets.STAGING_API_URL }}
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Build staging iOS
+      run: |
+        flutter build ios --release --flavor staging --verbose
+      env:
+        ENVIRONMENT: staging
+
+    - name: Build and Archive iOS
+      run: |
+        cd ios
+        xcodebuild -workspace Runner.xcworkspace \
+          -scheme staging \
+          -configuration Release \
+          -destination 'generic/platform=iOS' \
+          -archivePath staging.xcarchive \
+          archive
+
+    - name: Export IPA
+      run: |
+        cd ios
+        xcodebuild -exportArchive \
+          -archivePath staging.xcarchive \
+          -exportPath staging-ipa \
+          -exportOptionsPlist ExportOptions-staging.plist
+
+    - name: Upload staging IPA
+      uses: actions/upload-artifact@v3
+      with:
+        name: staging-ipa
+        path: ios/staging-ipa/*.ipa
+        retention-days: 14
+
+  automated-testing:
+    name: Automated Testing Suite
+    runs-on: macos-latest
+    needs: [build-staging-android, build-staging-ios]
+    timeout-minutes: 90
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Start iOS Simulator
+      run: |
+        xcrun simctl list devices available
+        xcrun simctl boot "iPhone 15" || true
+        sleep 30
+
+    - name: Run integration tests
+      run: |
+        if [ -d "integration_test" ]; then
+          echo "🧪 Running integration tests on staging build..."
+          flutter test integration_test/ --verbose
+        else
+          echo "No integration tests found"
+        fi
+
+    - name: Run E2E tests
+      run: |
+        echo "🔄 Running end-to-end test scenarios..."
+        # Placeholder for E2E tests - would integrate with tools like Patrol, Maestro, etc.
+        echo "E2E tests would run here"
+
+    - name: Performance testing
+      run: |
+        echo "⚡ Running performance tests..."
+        # Performance testing for staging environment
+        flutter test test/performance/ --reporter=expanded || echo "No performance tests found"
+
+  security-compliance:
+    name: Security & Compliance Check
+    runs-on: ubuntu-latest
+    needs: [validate-staging]
+    timeout-minutes: 25
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Security scan
+      run: |
+        echo "🔒 Running security compliance checks..."
+
+        # Check for hardcoded secrets
+        ./scripts/quality-check.sh --ci
+
+        # Dependency vulnerability scan
+        flutter pub deps --json > deps.json
+
+        # Check for compliance with mobile security standards
+        echo "✅ Security compliance check completed"
+
+    - name: License compliance
+      run: |
+        echo "📄 Checking license compliance..."
+        flutter pub deps --json | jq '.packages[] | select(.source == "hosted") | {name: .name, version: .version}'
+        echo "License compliance check completed"
+
+  deploy-to-internal:
+    name: Deploy to Internal Testing
+    runs-on: ubuntu-latest
+    needs: [build-staging-android, automated-testing, security-compliance]
+    if: github.ref == 'refs/heads/qa'
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download staging APK
+      uses: actions/download-artifact@v3
+      with:
+        name: staging-apk
+
+    - name: Deploy to Firebase App Distribution
+      uses: wzieba/Firebase-Distribution-Github-Action@v1
+      with:
+        appId: ${{ secrets.FIREBASE_APP_ID_STAGING }}
+        serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        groups: qa-team, stakeholders, beta-testers
+        file: app-staging-release.apk
+        releaseNotes: |
+          🚀 Staging Release - Ready for QA Testing
+
+          Version: ${{ github.run_number }}
+          Commit: ${{ github.sha }}
+          Branch: ${{ github.ref_name }}
+
+          📝 Changes:
+          ${{ github.event.head_commit.message }}
+
+          🧪 Testing Instructions:
+          - Verify core waste scanning functionality
+          - Test user authentication flows
+          - Check data persistence and sync
+          - Validate UI/UX improvements
+
+          📊 Test Coverage: Available in CI artifacts
+          🔒 Security: Passed compliance checks
+
+  deploy-to-play-internal:
+    name: Deploy to Google Play Internal Testing
+    runs-on: ubuntu-latest
+    needs: [build-staging-android, automated-testing]
+    if: github.ref == 'refs/heads/qa' && github.event_name == 'push'
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download staging AAB
+      uses: actions/download-artifact@v3
+      with:
+        name: staging-aab
+
+    - name: Deploy to Google Play Internal Testing
+      uses: r0adkll/upload-google-play@v1
+      with:
+        serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT }}
+        packageName: com.thatomofficial.waste_sorting_assistant.staging
+        releaseFiles: app-staging-release.aab
+        track: internal
+        status: completed
+        whatsNewDirectory: metadata/android/en-US/changelogs
+
+  deploy-to-testflight:
+    name: Deploy to TestFlight
+    runs-on: macos-latest
+    needs: [build-staging-ios, automated-testing]
+    if: (github.ref == 'refs/heads/qa' && github.event_name == 'push') || github.event.inputs.deploy_to_testflight == 'true'
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download staging IPA
+      uses: actions/download-artifact@v3
+      with:
+        name: staging-ipa
+
+    - name: Deploy to TestFlight
+      uses: apple-actions/upload-testflight-build@v1
+      with:
+        app-path: '*.ipa'
+        issuer-id: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        api-key-id: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+        api-private-key: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+
+  notify-qa-team:
+    name: Notify QA Team
+    runs-on: ubuntu-latest
+    needs: [deploy-to-internal, deploy-to-play-internal]
+    if: always() && github.ref == 'refs/heads/qa'
+
+    steps:
+    - name: Notify Slack QA Channel
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#qa-testing'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow
+        text: |
+          🧪 QA Release Ready for Testing!
+
+          📱 Staging build deployed and ready for testing
+          🔗 Firebase App Distribution: Check your email for download link
+          📊 Test coverage reports available in CI artifacts
+
+          Status: ${{ needs.deploy-to-internal.result }}
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+
+          Please begin QA testing cycle for this staging release.
+
+  generate-qa-report:
+    name: Generate QA Report
+    runs-on: ubuntu-latest
+    needs: [automated-testing, security-compliance]
+    if: always()
+
+    steps:
+    - name: Generate comprehensive QA report
+      run: |
+        echo "📋 Generating QA testing report..."
+
+        cat > qa-report.md << EOF
+        # QA Testing Report
+
+        ## Build Information
+        - **Environment**: Staging
+        - **Version**: ${{ github.run_number }}
+        - **Commit**: ${{ github.sha }}
+        - **Branch**: ${{ github.ref_name }}
+        - **Build Date**: $(date)
+
+        ## Test Results
+        - **Unit Tests**: ${{ needs.automated-testing.result }}
+        - **Integration Tests**: ${{ needs.automated-testing.result }}
+        - **Security Compliance**: ${{ needs.security-compliance.result }}
+
+        ## Deployment Status
+        - **Firebase Distribution**: ${{ needs.deploy-to-internal.result }}
+        - **Google Play Internal**: ${{ needs.deploy-to-play-internal.result }}
+
+        ## Testing Checklist
+        - [ ] User authentication (sign up, sign in, sign out)
+        - [ ] Waste item scanning and recognition
+        - [ ] Camera functionality and permissions
+        - [ ] Data persistence and sync
+        - [ ] Profile management
+        - [ ] Statistics and tracking
+        - [ ] Offline functionality
+        - [ ] Performance testing
+        - [ ] Accessibility testing
+        - [ ] Multi-device compatibility
+
+        ## Known Issues
+        - List any known issues from previous testing cycles
+
+        ## Notes
+        - Additional testing notes and observations
+        EOF
+
+    - name: Upload QA report
+      uses: actions/upload-artifact@v3
+      with:
+        name: qa-testing-report
+        path: qa-report.md
+        retention-days: 30

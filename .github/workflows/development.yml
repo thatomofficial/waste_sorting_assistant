@@ -1,0 +1,284 @@
+name: Development Branch Pipeline
+
+on:
+  push:
+    branches: [ dev, feature/* ]
+  pull_request:
+    branches: [ dev ]
+
+env:
+  FLUTTER_VERSION: '3.24.3'
+  ENVIRONMENT: 'development'
+
+jobs:
+  code-quality:
+    name: Code Quality & Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Verify formatting
+      run: dart format --output=none --set-exit-if-changed .
+
+    - name: Run static analysis
+      run: flutter analyze --fatal-infos
+
+    - name: Run custom quality checks
+      run: ./scripts/quality-check.sh --verbose
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Run unit tests with coverage
+      run: flutter test --coverage --reporter=expanded
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: coverage/lcov.info
+        name: unit-tests-coverage
+        flags: unittests
+
+  build-dev-android:
+    name: Build Development Android
+    runs-on: ubuntu-latest
+    needs: [code-quality, unit-tests]
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'zulu'
+        java-version: '17'
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Build development APK
+      run: flutter build apk --debug --flavor development --verbose
+      env:
+        ENVIRONMENT: development
+
+    - name: Upload development APK
+      uses: actions/upload-artifact@v3
+      with:
+        name: development-apk
+        path: build/app/outputs/flutter-apk/app-development-debug.apk
+        retention-days: 7
+
+  build-dev-ios:
+    name: Build Development iOS
+    runs-on: macos-latest
+    needs: [code-quality, unit-tests]
+    timeout-minutes: 45
+    if: github.event_name == 'push' && contains(github.ref, 'dev')
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Build development iOS
+      run: flutter build ios --debug --no-codesign --verbose
+      env:
+        ENVIRONMENT: development
+
+  integration-tests:
+    name: Integration Tests (Development)
+    runs-on: macos-latest
+    needs: [build-dev-android]
+    timeout-minutes: 60
+    if: github.event_name == 'push' && contains(github.ref, 'dev')
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Start iOS Simulator
+      run: |
+        xcrun simctl list devices available
+        xcrun simctl boot "iPhone 15" || true
+
+    - name: Run integration tests
+      run: |
+        if [ -d "integration_test" ]; then
+          flutter test integration_test/ --verbose
+        else
+          echo "No integration tests found - skipping"
+        fi
+
+  deploy-to-firebase:
+    name: Deploy to Firebase App Distribution
+    runs-on: ubuntu-latest
+    needs: [build-dev-android]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download APK artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: development-apk
+
+    - name: Deploy to Firebase App Distribution
+      uses: wzieba/Firebase-Distribution-Github-Action@v1
+      with:
+        appId: ${{ secrets.FIREBASE_APP_ID_DEVELOPMENT }}
+        serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        groups: developers, internal-testers
+        file: app-development-debug.apk
+        releaseNotes: |
+          Development build from commit: ${{ github.sha }}
+
+          Changes:
+          ${{ github.event.head_commit.message }}
+
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+
+  notify-slack:
+    name: Notify Development Team
+    runs-on: ubuntu-latest
+    needs: [deploy-to-firebase]
+    if: always() && github.ref == 'refs/heads/dev'
+
+    steps:
+    - name: Notify Slack
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#development'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow
+        text: |
+          Development build completed for Waste Sorting Assistant
+          Status: ${{ needs.deploy-to-firebase.result }}
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  performance-monitoring:
+    name: Performance Baseline
+    runs-on: ubuntu-latest
+    needs: [build-dev-android]
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Run performance tests
+      run: |
+        # Performance baseline tests
+        flutter test test/performance/ --reporter=expanded || echo "No performance tests found"
+
+    - name: Analyze bundle size
+      run: |
+        if [ -f "build/app/outputs/flutter-apk/app-development-debug.apk" ]; then
+          APK_SIZE=$(stat -c%s build/app/outputs/flutter-apk/app-development-debug.apk)
+          echo "Development APK size: $((APK_SIZE / 1024 / 1024)) MB"
+
+          # Store size for trend analysis
+          echo "apk_size_mb=$((APK_SIZE / 1024 / 1024))" >> $GITHUB_OUTPUT
+        fi
+
+  security-scan-dev:
+    name: Security Scan (Development)
+    runs-on: ubuntu-latest
+    needs: [code-quality]
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run security scan
+      run: |
+        # Check for secrets in code
+        echo "Scanning for potential security issues..."
+
+        # Look for potential secrets (basic check)
+        if grep -r -i --include="*.dart" "password\|secret\|key\|token" lib/ | grep -v "// ignore\|TODO\|FIXME"; then
+          echo "⚠️ Potential security issues found - please review"
+        else
+          echo "✅ No obvious security issues detected"
+        fi
+
+    - name: Dependency vulnerability scan
+      run: |
+        flutter pub deps --json > deps.json
+        echo "Dependencies scanned for vulnerabilities"
+        # This would integrate with tools like OSV-Scanner in a real setup

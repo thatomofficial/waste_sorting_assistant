@@ -94,7 +94,8 @@ class AppAssets {
   static const String intermediateBadge = '$_iconPath/intermediate_badge.png';
   static const String expertBadge = '$_iconPath/expert_badge.png';
   static const String ecoWarriorBadge = '$_iconPath/eco_warrior_badge.png';
-  static const String recyclingChampionBadge = '$_iconPath/recycling_champion_badge.png';
+  static const String recyclingChampionBadge =
+      '$_iconPath/recycling_champion_badge.png';
   
   // Theme Icons
   static const String lightModeIcon = '$_iconPath/light_mode.png';

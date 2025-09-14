@@ -1,0 +1,370 @@
+name: Automated Release Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      pre_release:
+        description: 'Create pre-release'
+        required: false
+        default: false
+        type: boolean
+      deploy_immediately:
+        description: 'Deploy to production immediately'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  FLUTTER_VERSION: '3.24.3'
+
+jobs:
+  validate-release:
+    name: Validate Release Readiness
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    outputs:
+      new_version: ${{ steps.version.outputs.new_version }}
+      current_version: ${{ steps.version.outputs.current_version }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.RELEASE_TOKEN }}
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Get current version
+      id: version
+      run: |
+        CURRENT_VERSION=$(grep "version:" pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
+        echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+        # Calculate new version
+        IFS='.' read -ra VERSION_PARTS <<< "$CURRENT_VERSION"
+        MAJOR=${VERSION_PARTS[0]}
+        MINOR=${VERSION_PARTS[1]}
+        PATCH=${VERSION_PARTS[2]}
+
+        case "${{ github.event.inputs.version_type }}" in
+          major)
+            NEW_VERSION="$((MAJOR + 1)).0.0"
+            ;;
+          minor)
+            NEW_VERSION="$MAJOR.$((MINOR + 1)).0"
+            ;;
+          patch)
+            NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+            ;;
+        esac
+
+        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "Current version: $CURRENT_VERSION"
+        echo "New version: $NEW_VERSION"
+
+    - name: Validate branch
+      run: |
+        CURRENT_BRANCH=$(git branch --show-current)
+        if [[ "$CURRENT_BRANCH" != "main" ]]; then
+          echo "❌ Releases can only be created from main branch. Current: $CURRENT_BRANCH"
+          exit 1
+        fi
+
+    - name: Check for uncommitted changes
+      run: |
+        if [[ -n $(git status --porcelain) ]]; then
+          echo "❌ Repository has uncommitted changes"
+          git status
+          exit 1
+        fi
+
+    - name: Run comprehensive validation
+      run: |
+        echo "🧪 Running release validation suite..."
+
+        # Get dependencies
+        flutter pub get
+
+        # Format check
+        dart format --output=none --set-exit-if-changed .
+
+        # Static analysis
+        flutter analyze --fatal-infos
+
+        # Quality checks
+        ./scripts/quality-check.sh --ci --strict
+
+        # Full test suite
+        flutter test --coverage --reporter=expanded
+
+        # Check coverage threshold
+        if command -v lcov &> /dev/null; then
+          COVERAGE=$(lcov --summary coverage/lcov.info | grep lines | awk '{print $2}' | sed 's/%//')
+          if (( $(echo "$COVERAGE < 85" | bc -l) )); then
+            echo "❌ Coverage $COVERAGE% is below 85% threshold for release"
+            exit 1
+          fi
+        fi
+
+        echo "✅ Release validation passed"
+
+  update-version:
+    name: Update Version and Changelog
+    runs-on: ubuntu-latest
+    needs: [validate-release]
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.RELEASE_TOKEN }}
+
+    - name: Setup Git
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+    - name: Update pubspec.yaml version
+      run: |
+        NEW_VERSION="${{ needs.validate-release.outputs.new_version }}"
+        BUILD_NUMBER=${{ github.run_number }}
+
+        # Update version in pubspec.yaml
+        sed -i "s/version: .*/version: $NEW_VERSION+$BUILD_NUMBER/" pubspec.yaml
+
+        echo "Updated pubspec.yaml to version $NEW_VERSION+$BUILD_NUMBER"
+
+    - name: Generate changelog
+      run: |
+        NEW_VERSION="${{ needs.validate-release.outputs.new_version }}"
+
+        # Create or update CHANGELOG.md
+        if [[ ! -f CHANGELOG.md ]]; then
+          echo "# Changelog" > CHANGELOG.md
+          echo "" >> CHANGELOG.md
+        fi
+
+        # Generate changelog entry
+        cat > temp_changelog.md << EOF
+        # Changelog
+
+        ## [v$NEW_VERSION] - $(date +%Y-%m-%d)
+
+        ### Added
+        - New features and improvements
+
+        ### Changed
+        - Updates and modifications
+
+        ### Fixed
+        - Bug fixes and patches
+
+        ### Security
+        - Security improvements
+
+        EOF
+
+        # Get commits since last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        if [[ -n "$LAST_TAG" ]]; then
+          echo "### Commits since $LAST_TAG" >> temp_changelog.md
+          git log $LAST_TAG..HEAD --pretty=format:"- %s (%h)" >> temp_changelog.md
+          echo "" >> temp_changelog.md
+        fi
+
+        echo "" >> temp_changelog.md
+
+        # Merge with existing changelog
+        if [[ -f CHANGELOG.md ]] && [[ $(wc -l < CHANGELOG.md) -gt 2 ]]; then
+          tail -n +3 CHANGELOG.md >> temp_changelog.md
+        fi
+
+        mv temp_changelog.md CHANGELOG.md
+
+    - name: Update version in Flutter files
+      run: |
+        NEW_VERSION="${{ needs.validate-release.outputs.new_version }}"
+
+        # Update version in app config if it exists
+        if [[ -f "lib/config/app_config.dart" ]]; then
+          sed -i "s/'app_version': '.*'/'app_version': '$NEW_VERSION'/" lib/config/app_config.dart
+          sed -i "s/'build_number': '.*'/'build_number': '${{ github.run_number }}'/" lib/config/app_config.dart
+        fi
+
+    - name: Commit version changes
+      run: |
+        NEW_VERSION="${{ needs.validate-release.outputs.new_version }}"
+
+        git add pubspec.yaml CHANGELOG.md
+        if [[ -f "lib/config/app_config.dart" ]]; then
+          git add lib/config/app_config.dart
+        fi
+
+        git commit -m "chore: bump version to v$NEW_VERSION
+
+        - Update pubspec.yaml version
+        - Update CHANGELOG.md
+        - Update app configuration
+
+        🤖 Generated with [Claude Code](https://claude.ai/code)
+
+        Co-Authored-By: Claude <noreply@anthropic.com>"
+
+        git push origin main
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate-release, update-version]
+    timeout-minutes: 20
+
+    outputs:
+      tag_name: ${{ steps.create_tag.outputs.tag_name }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.RELEASE_TOKEN }}
+        ref: main
+
+    - name: Create and push tag
+      id: create_tag
+      run: |
+        NEW_VERSION="${{ needs.validate-release.outputs.new_version }}"
+        TAG_NAME="v$NEW_VERSION"
+
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+        git tag -a "$TAG_NAME" -m "Release $TAG_NAME"
+        git push origin "$TAG_NAME"
+
+        echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+
+    - name: Extract release notes
+      run: |
+        NEW_VERSION="${{ needs.validate-release.outputs.new_version }}"
+
+        # Extract release notes from CHANGELOG.md
+        awk "/## \[v$NEW_VERSION\]/,/## \[v/{if(/## \[v$NEW_VERSION\]/) p=1; else if(/## \[v/ && !/v$NEW_VERSION/) p=0; if(p && !/## \[v$NEW_VERSION\]/) print}" CHANGELOG.md > release_notes.md
+
+        # If no specific notes, create generic ones
+        if [[ ! -s release_notes.md ]]; then
+          cat > release_notes.md << EOF
+        ### Release v$NEW_VERSION
+
+        This release includes improvements, bug fixes, and new features for the Waste Sorting Assistant.
+
+        #### What's New
+        - Enhanced waste recognition accuracy
+        - Improved user experience
+        - Performance optimizations
+        - Bug fixes and stability improvements
+
+        #### Technical Details
+        - Build: ${{ github.run_number }}
+        - Commit: ${{ github.sha }}
+        EOF
+        fi
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.create_tag.outputs.tag_name }}
+        name: Release ${{ steps.create_tag.outputs.tag_name }}
+        body_path: release_notes.md
+        draft: false
+        prerelease: ${{ github.event.inputs.pre_release }}
+        generate_release_notes: true
+
+  trigger-production-deployment:
+    name: Trigger Production Deployment
+    runs-on: ubuntu-latest
+    needs: [create-release]
+    if: github.event.inputs.deploy_immediately == 'true'
+    timeout-minutes: 5
+
+    steps:
+    - name: Trigger production workflow
+      uses: benc-uk/workflow-dispatch@v1
+      with:
+        workflow: production.yml
+        token: ${{ secrets.RELEASE_TOKEN }}
+        inputs: |
+          {
+            "version": "${{ needs.create-release.outputs.tag_name }}",
+            "skip_tests": "false",
+            "deploy_android": "true",
+            "deploy_ios": "true"
+          }
+
+  notify-release:
+    name: Notify Release Completion
+    runs-on: ubuntu-latest
+    needs: [validate-release, create-release]
+    if: always()
+
+    steps:
+    - name: Notify Slack
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#releases'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow
+        text: |
+          🎉 NEW RELEASE CREATED!
+
+          **Release Information:**
+          - Version: ${{ needs.create-release.outputs.tag_name || needs.validate-release.outputs.new_version }}
+          - Type: ${{ github.event.inputs.version_type }} release
+          - Pre-release: ${{ github.event.inputs.pre_release }}
+          - Auto-deploy: ${{ github.event.inputs.deploy_immediately }}
+
+          **Status:**
+          - Validation: ${{ needs.validate-release.result }}
+          - Release Creation: ${{ needs.create-release.result }}
+
+          **Next Steps:**
+          ${{ github.event.inputs.deploy_immediately == 'true' && '✅ Production deployment triggered automatically' || '⏳ Manual deployment required - trigger production workflow when ready' }}
+
+          🔗 [View Release](https://github.com/${{ github.repository }}/releases/tag/${{ needs.create-release.outputs.tag_name }})
+
+  cleanup-artifacts:
+    name: Cleanup Old Artifacts
+    runs-on: ubuntu-latest
+    needs: [create-release]
+
+    steps:
+    - name: Delete old artifacts
+      uses: geekyeggo/delete-artifact@v2
+      with:
+        name: |
+          development-apk
+          staging-apk
+          staging-aab
+        failOnError: false
+
+    - name: Cleanup old releases
+      run: |
+        echo "🧹 Cleaning up old pre-releases and artifacts..."
+        # This would clean up old pre-releases and development artifacts
+        # to keep the repository clean and save storage space

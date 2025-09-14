@@ -8,12 +8,12 @@ class UserModel extends User {
     required String profileImageUrl,
     required List<String> favoriteItems,
   }) : super(
-    id: id,
-    name: name,
-    email: email,
-    profileImageUrl: profileImageUrl,
-    favoriteItems: favoriteItems,
-  );
+          id: id,
+          name: name,
+          email: email,
+          profileImageUrl: profileImageUrl,
+          favoriteItems: favoriteItems,
+        );
 
   /// Converts a JSON object into a UserModel
   factory UserModel.fromJson(Map<String, dynamic> json) {
@@ -22,7 +22,7 @@ class UserModel extends User {
       name: json['name'] as String,
       email: json['email'] as String,
       profileImageUrl: json['profile_image_url'] as String? ?? '',
-      favoriteItems: List<String>.from(json['favorite_items'] ?? []),
+      favoriteItems: List<String>.from((json['favorite_items'] as List<dynamic>?) ?? <String>[]),
     );
   }
 

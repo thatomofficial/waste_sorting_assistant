@@ -262,88 +262,72 @@ class AppRoutes {
   }
 
   // Helper method for slide transitions
-  static PageRouteBuilder<T> _buildSlideRoute<T>(
-    Widget page,
-    RouteSettings settings, {
-    SlideDirection direction = SlideDirection.rightToLeft,
-    Duration duration = const Duration(milliseconds: 300),
-  }) {
-    Offset getBeginOffset() {
-      switch (direction) {
-        case SlideDirection.rightToLeft:
-          return const Offset(1.0, 0.0);
-        case SlideDirection.leftToRight:
-          return const Offset(-1.0, 0.0);
-        case SlideDirection.topToBottom:
-          return const Offset(0.0, -1.0);
-        case SlideDirection.bottomToTop:
-          return const Offset(0.0, 1.0);
-      }
-    }
+  // TODO: Uncomment when slide transitions are needed
+  // static PageRouteBuilder<T> _buildSlideRoute<T>(
+  //   Widget page,
+  //   RouteSettings settings, {
+  //   SlideDirection direction = SlideDirection.rightToLeft,
+  //   Duration duration = const Duration(milliseconds: 300),
+  // }) {
+  //   Offset getBeginOffset() {
+  //     switch (direction) {
+  //       case SlideDirection.rightToLeft:
+  //         return const Offset(1.0, 0.0);
+  //       case SlideDirection.leftToRight:
+  //         return const Offset(-1.0, 0.0);
+  //       case SlideDirection.topToBottom:
+  //         return const Offset(0.0, -1.0);
+  //       case SlideDirection.bottomToTop:
+  //         return const Offset(0.0, 1.0);
+  //     }
+  //   }
 
-    return PageRouteBuilder<T>(
-      settings: settings,
-      pageBuilder: (context, animation, secondaryAnimation) => page,
-      transitionDuration: duration,
-      transitionsBuilder: (context, animation, secondaryAnimation, child) {
-        final tween = Tween<Offset>(
-          begin: getBeginOffset(),
-          end: Offset.zero,
-        ).chain(CurveTween(curve: Curves.easeInOut));
+  //   return PageRouteBuilder<T>(
+  //     settings: settings,
+  //     pageBuilder: (context, animation, secondaryAnimation) => page,
+  //     transitionDuration: duration,
+  //     transitionsBuilder: (context, animation, secondaryAnimation, child) {
+  //       final tween = Tween<Offset>(
+  //         begin: getBeginOffset(),
+  //         end: Offset.zero,
+  //       ).chain(CurveTween(curve: Curves.easeInOut));
 
-        return SlideTransition(
-          position: animation.drive(tween),
-          child: child,
-        );
-      },
-    );
-  }
+  //       return SlideTransition(
+  //         position: animation.drive(tween),
+  //         child: child,
+  //       );
+  //     },
+  //   );
+  // }
 
-  // Helper method for fade transitions
-  static PageRouteBuilder<T> _buildFadeRoute<T>(
-    Widget page,
-    RouteSettings settings, {
-    Duration duration = const Duration(milliseconds: 300),
-  }) {
-    return PageRouteBuilder<T>(
-      settings: settings,
-      pageBuilder: (context, animation, secondaryAnimation) => page,
-      transitionDuration: duration,
-      transitionsBuilder: (context, animation, secondaryAnimation, child) {
-        return FadeTransition(
-          opacity: animation,
-          child: child,
-        );
-      },
-    );
-  }
 
   // Helper method for scale transitions
-  static PageRouteBuilder<T> _buildScaleRoute<T>(
-    Widget page,
-    RouteSettings settings, {
-    Duration duration = const Duration(milliseconds: 300),
-  }) {
-    return PageRouteBuilder<T>(
-      settings: settings,
-      pageBuilder: (context, animation, secondaryAnimation) => page,
-      transitionDuration: duration,
-      transitionsBuilder: (context, animation, secondaryAnimation, child) {
-        final scaleAnimation = Tween<double>(
-          begin: 0.0,
-          end: 1.0,
-        ).animate(CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeInOut,
-        ));
+  // TODO: Uncomment when scale transitions are needed
+  // static PageRouteBuilder<T> _buildScaleRoute<T>(
+  //   Widget page,
+  //   RouteSettings settings, {
+  //   Duration duration = const Duration(milliseconds: 300),
+  // }) {
+  //   return PageRouteBuilder<T>(
+  //     settings: settings,
+  //     pageBuilder: (context, animation, secondaryAnimation) => page,
+  //     transitionDuration: duration,
+  //     transitionsBuilder: (context, animation, secondaryAnimation, child) {
+  //       final scaleAnimation = Tween<double>(
+  //         begin: 0.0,
+  //         end: 1.0,
+  //       ).animate(CurvedAnimation(
+  //         parent: animation,
+  //         curve: Curves.easeInOut,
+  //       ));
 
-        return ScaleTransition(
-          scale: scaleAnimation,
-          child: child,
-        );
-      },
-    );
-  }
+  //       return ScaleTransition(
+  //         scale: scaleAnimation,
+  //         child: child,
+  //       );
+  //     },
+  //   );
+  // }
 
   // Navigation helper methods
   static Future<T?> pushNamed<T extends Object?>(
@@ -428,12 +412,13 @@ class AppRoutes {
   }
 }
 
-enum SlideDirection {
-  rightToLeft,
-  leftToRight,
-  topToBottom,
-  bottomToTop,
-}
+// TODO: Uncomment when slide transitions are needed
+// enum SlideDirection {
+//   rightToLeft,
+//   leftToRight,
+//   topToBottom,
+//   bottomToTop,
+// }
 
 class _NotFoundScreen extends StatelessWidget {
   const _NotFoundScreen();

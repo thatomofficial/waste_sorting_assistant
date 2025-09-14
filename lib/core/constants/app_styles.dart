@@ -236,10 +236,14 @@ class AppStyles {
       );
 
   // Border Radius
-  static const BorderRadius smallBorderRadius = BorderRadius.all(Radius.circular(8));
-  static const BorderRadius mediumBorderRadius = BorderRadius.all(Radius.circular(12));
-  static const BorderRadius largeBorderRadius = BorderRadius.all(Radius.circular(16));
-  static const BorderRadius extraLargeBorderRadius = BorderRadius.all(Radius.circular(24));
+  static const BorderRadius smallBorderRadius =
+      BorderRadius.all(Radius.circular(8));
+  static const BorderRadius mediumBorderRadius =
+      BorderRadius.all(Radius.circular(12));
+  static const BorderRadius largeBorderRadius =
+      BorderRadius.all(Radius.circular(16));
+  static const BorderRadius extraLargeBorderRadius =
+      BorderRadius.all(Radius.circular(24));
 
   // Padding and Margins
   static const EdgeInsets smallPadding = EdgeInsets.all(8);

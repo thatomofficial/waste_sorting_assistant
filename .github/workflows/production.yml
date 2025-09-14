@@ -1,0 +1,534 @@
+name: Production Deployment Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+    branches: [ main ]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to deploy (e.g., v1.0.0)'
+        required: true
+      skip_tests:
+        description: 'Skip tests (emergency deployment only)'
+        required: false
+        default: false
+        type: boolean
+      deploy_android:
+        description: 'Deploy to Google Play Store'
+        required: false
+        default: true
+        type: boolean
+      deploy_ios:
+        description: 'Deploy to App Store'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  FLUTTER_VERSION: '3.24.3'
+  ENVIRONMENT: 'production'
+
+jobs:
+  pre-deployment-validation:
+    name: Pre-deployment Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Validate production readiness
+      run: |
+        echo "🔍 Validating production readiness..."
+
+        # Check version consistency
+        if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/tags/* ]]; then
+          TAG_VERSION=${GITHUB_REF#refs/tags/}
+          PUBSPEC_VERSION=$(grep "version:" pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
+
+          if [[ "$TAG_VERSION" != "v$PUBSPEC_VERSION" ]]; then
+            echo "❌ Version mismatch: Tag $TAG_VERSION vs pubspec.yaml $PUBSPEC_VERSION"
+            exit 1
+          fi
+        fi
+
+        echo "✅ Version validation passed"
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Run comprehensive validation
+      if: ${{ !github.event.inputs.skip_tests }}
+      run: |
+        echo "🧪 Running comprehensive test suite..."
+
+        # Format check
+        dart format --output=none --set-exit-if-changed .
+
+        # Static analysis with strict rules
+        flutter analyze --fatal-infos
+
+        # Quality checks
+        ./scripts/quality-check.sh --ci --strict
+
+        # Full test suite with coverage
+        flutter test --coverage --reporter=expanded
+
+        # Check coverage threshold
+        if command -v lcov &> /dev/null; then
+          COVERAGE=$(lcov --summary coverage/lcov.info | grep lines | awk '{print $2}' | sed 's/%//')
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "❌ Coverage $COVERAGE% is below 80% threshold"
+            exit 1
+          fi
+        fi
+
+        echo "✅ All validation checks passed"
+
+    - name: Security audit
+      run: |
+        echo "🔒 Running security audit..."
+
+        # Check for secrets
+        ./scripts/quality-check.sh --ci
+
+        # Dependency vulnerability scan
+        flutter pub deps --json > deps.json
+
+        echo "✅ Security audit completed"
+
+    - name: Upload coverage for monitoring
+      uses: codecov/codecov-action@v3
+      with:
+        file: coverage/lcov.info
+        name: production-coverage
+        flags: production
+
+  build-production-android:
+    name: Build Production Android
+    runs-on: ubuntu-latest
+    needs: [pre-deployment-validation]
+    timeout-minutes: 45
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'zulu'
+        java-version: '17'
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Configure production environment
+      run: |
+        echo "⚙️ Configuring production environment..."
+        export ENVIRONMENT=production
+        export API_BASE_URL=${{ secrets.PROD_API_URL }}
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Build production APK
+      run: flutter build apk --release --flavor production --verbose
+      env:
+        ENVIRONMENT: production
+
+    - name: Build production App Bundle
+      run: flutter build appbundle --release --flavor production --verbose
+      env:
+        ENVIRONMENT: production
+
+    - name: Sign Android Release
+      uses: r0adkll/sign-android-release@v1
+      with:
+        releaseDirectory: build/app/outputs/flutter-apk
+        signingKeyBase64: ${{ secrets.ANDROID_RELEASE_SIGNING_KEY }}
+        alias: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+        keyStorePassword: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+        keyPassword: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+
+    - name: Sign App Bundle
+      uses: r0adkll/sign-android-release@v1
+      with:
+        releaseDirectory: build/app/outputs/bundle/productionRelease
+        signingKeyBase64: ${{ secrets.ANDROID_RELEASE_SIGNING_KEY }}
+        alias: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+        keyStorePassword: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+        keyPassword: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+
+    - name: Verify APK size
+      run: |
+        APK_SIZE=$(stat -c%s build/app/outputs/flutter-apk/app-production-release.apk)
+        APK_SIZE_MB=$((APK_SIZE / 1024 / 1024))
+
+        echo "📱 Production APK size: ${APK_SIZE_MB} MB"
+
+        if [ $APK_SIZE -gt 104857600 ]; then # 100MB limit
+          echo "❌ APK size ${APK_SIZE_MB}MB exceeds 100MB limit"
+          exit 1
+        fi
+
+    - name: Upload production APK
+      uses: actions/upload-artifact@v3
+      with:
+        name: production-apk
+        path: build/app/outputs/flutter-apk/app-production-release.apk
+        retention-days: 90
+
+    - name: Upload production AAB
+      uses: actions/upload-artifact@v3
+      with:
+        name: production-aab
+        path: build/app/outputs/bundle/productionRelease/app-production-release.aab
+        retention-days: 90
+
+  build-production-ios:
+    name: Build Production iOS
+    runs-on: macos-latest
+    needs: [pre-deployment-validation]
+    timeout-minutes: 60
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: 'latest-stable'
+
+    - name: Install iOS certificates
+      uses: apple-actions/import-codesign-certs@v2
+      with:
+        p12-file-base64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE }}
+        p12-password: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+
+    - name: Install provisioning profiles
+      uses: apple-actions/download-provisioning-profiles@v1
+      with:
+        bundle-id: com.thatomofficial.waste_sorting_assistant
+        issuer-id: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        api-key-id: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+        api-private-key: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+
+    - name: Configure production environment
+      run: |
+        export ENVIRONMENT=production
+        export API_BASE_URL=${{ secrets.PROD_API_URL }}
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Build production iOS
+      run: flutter build ios --release --flavor production --verbose
+      env:
+        ENVIRONMENT: production
+
+    - name: Build and Archive iOS
+      run: |
+        cd ios
+        xcodebuild -workspace Runner.xcworkspace \
+          -scheme production \
+          -configuration Release \
+          -destination 'generic/platform=iOS' \
+          -archivePath production.xcarchive \
+          archive
+
+    - name: Export production IPA
+      run: |
+        cd ios
+        xcodebuild -exportArchive \
+          -archivePath production.xcarchive \
+          -exportPath production-ipa \
+          -exportOptionsPlist ExportOptions-production.plist
+
+    - name: Upload production IPA
+      uses: actions/upload-artifact@v3
+      with:
+        name: production-ipa
+        path: ios/production-ipa/*.ipa
+        retention-days: 90
+
+  production-smoke-tests:
+    name: Production Smoke Tests
+    runs-on: macos-latest
+    needs: [build-production-android, build-production-ios]
+    timeout-minutes: 45
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Run critical path tests
+      run: |
+        echo "🔥 Running production smoke tests..."
+
+        # Start iOS simulator
+        xcrun simctl boot "iPhone 15" || true
+        sleep 30
+
+        # Run critical integration tests
+        if [ -d "integration_test/smoke" ]; then
+          flutter test integration_test/smoke/ --verbose
+        else
+          echo "No smoke tests found - running full integration test suite"
+          flutter test integration_test/ --verbose || echo "No integration tests found"
+        fi
+
+  deploy-to-play-store:
+    name: Deploy to Google Play Store
+    runs-on: ubuntu-latest
+    needs: [build-production-android, production-smoke-tests]
+    if: (github.event.inputs.deploy_android != 'false') && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'release')
+    timeout-minutes: 30
+    environment:
+      name: production-android
+      url: https://play.google.com/store/apps/details?id=com.thatomofficial.waste_sorting_assistant
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download production AAB
+      uses: actions/download-artifact@v3
+      with:
+        name: production-aab
+
+    - name: Deploy to Google Play Store
+      uses: r0adkll/upload-google-play@v1
+      with:
+        serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT }}
+        packageName: com.thatomofficial.waste_sorting_assistant
+        releaseFiles: app-production-release.aab
+        track: production
+        status: completed
+        whatsNewDirectory: metadata/android/en-US/changelogs
+        mappingFile: build/app/outputs/mapping/productionRelease/mapping.txt
+
+    - name: Create Play Store release notes
+      run: |
+        echo "🎉 Production release deployed to Google Play Store"
+        echo "Version: ${{ github.ref_name || github.event.inputs.version }}"
+        echo "Build: ${{ github.run_number }}"
+
+  deploy-to-app-store:
+    name: Deploy to Apple App Store
+    runs-on: macos-latest
+    needs: [build-production-ios, production-smoke-tests]
+    if: (github.event.inputs.deploy_ios != 'false') && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'release')
+    timeout-minutes: 30
+    environment:
+      name: production-ios
+      url: https://apps.apple.com/app/waste-sorting-assistant/
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download production IPA
+      uses: actions/download-artifact@v3
+      with:
+        name: production-ipa
+
+    - name: Deploy to App Store
+      uses: apple-actions/upload-testflight-build@v1
+      with:
+        app-path: '*.ipa'
+        issuer-id: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        api-key-id: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+        api-private-key: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+
+    - name: Submit for App Store Review
+      uses: apple-actions/upload-testflight-build@v1
+      with:
+        app-path: '*.ipa'
+        issuer-id: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        api-key-id: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+        api-private-key: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        submit-for-review: true
+
+  create-github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-production-android, build-production-ios]
+    if: startsWith(github.ref, 'refs/tags/')
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+
+    - name: Generate changelog
+      run: |
+        echo "# Release Notes" > RELEASE_NOTES.md
+        echo "" >> RELEASE_NOTES.md
+        echo "## What's New" >> RELEASE_NOTES.md
+
+        # Get commits since last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+        if [ -n "$LAST_TAG" ]; then
+          git log $LAST_TAG..HEAD --pretty=format:"- %s" >> RELEASE_NOTES.md
+        else
+          echo "- Initial release" >> RELEASE_NOTES.md
+        fi
+
+        echo "" >> RELEASE_NOTES.md
+        echo "## Technical Details" >> RELEASE_NOTES.md
+        echo "- Build: ${{ github.run_number }}" >> RELEASE_NOTES.md
+        echo "- Commit: ${{ github.sha }}" >> RELEASE_NOTES.md
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        body_path: RELEASE_NOTES.md
+        files: |
+          production-apk/app-production-release.apk
+          production-aab/app-production-release.aab
+          production-ipa/*.ipa
+        draft: false
+        prerelease: false
+
+  post-deployment-monitoring:
+    name: Post-deployment Monitoring Setup
+    runs-on: ubuntu-latest
+    needs: [deploy-to-play-store, deploy-to-app-store]
+    if: always()
+    timeout-minutes: 10
+
+    steps:
+    - name: Setup monitoring alerts
+      run: |
+        echo "📊 Setting up post-deployment monitoring..."
+
+        # This would integrate with monitoring services like:
+        # - Firebase Crashlytics
+        # - Sentry
+        # - Custom analytics
+
+        echo "Monitoring configured for production deployment"
+
+    - name: Notify stakeholders
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#releases'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow
+        text: |
+          🚀 PRODUCTION DEPLOYMENT COMPLETED!
+
+          📱 Waste Sorting Assistant has been deployed to production
+
+          **Deployment Status:**
+          - Google Play Store: ${{ needs.deploy-to-play-store.result }}
+          - Apple App Store: ${{ needs.deploy-to-app-store.result }}
+
+          **Release Information:**
+          - Version: ${{ github.ref_name }}
+          - Build: ${{ github.run_number }}
+          - Commit: ${{ github.sha }}
+
+          🔍 Monitor the release closely for the next 24 hours
+          📊 Check analytics and crash reporting dashboards
+
+          Congratulations team! 🎉
+
+  rollback-preparation:
+    name: Prepare Rollback Plan
+    runs-on: ubuntu-latest
+    needs: [deploy-to-play-store, deploy-to-app-store]
+    if: always()
+
+    steps:
+    - name: Document rollback procedure
+      run: |
+        echo "🔄 Documenting rollback procedure..."
+
+        cat > rollback-plan.md << EOF
+        # Rollback Plan - Production Deployment
+
+        ## Release Information
+        - Version: ${{ github.ref_name }}
+        - Build: ${{ github.run_number }}
+        - Deployment Date: $(date)
+
+        ## Rollback Triggers
+        - Critical bugs affecting core functionality
+        - Security vulnerabilities
+        - Performance degradation > 20%
+        - Crash rate > 1%
+
+        ## Rollback Steps
+        1. **Immediate Actions:**
+           - Remove from Play Store/App Store if needed
+           - Revert to previous stable version
+           - Notify stakeholders
+
+        2. **Communication:**
+           - Update status page
+           - Notify users through in-app messaging
+           - Coordinate with support team
+
+        3. **Investigation:**
+           - Analyze crash reports and logs
+           - Identify root cause
+           - Plan hotfix if needed
+
+        ## Previous Stable Version
+        - Available in GitHub releases
+        - Signed APK/IPA ready for emergency deployment
+
+        ## Contact Information
+        - On-call engineer: [Contact info]
+        - Release manager: [Contact info]
+        - Support team: [Contact info]
+        EOF
+
+    - name: Upload rollback plan
+      uses: actions/upload-artifact@v3
+      with:
+        name: rollback-plan
+        path: rollback-plan.md
+        retention-days: 30

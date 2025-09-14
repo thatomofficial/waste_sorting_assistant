@@ -1,6 +1,7 @@
 class AppStrings {
   static const String appName = 'Waste Sorting Assistant';
-  static const String appDescription = 'Smart waste sorting with AI recognition';
+  static const String appDescription =
+      'Smart waste sorting with AI recognition';
 
   // Authentication
   static const String signIn = 'Sign In';
@@ -76,7 +77,8 @@ class AppStrings {
 
   // Error Messages
   static const String invalidEmail = 'Please enter a valid email';
-  static const String passwordTooShort = 'Password must be at least 6 characters';
+  static const String passwordTooShort =
+      'Password must be at least 6 characters';
   static const String passwordsDoNotMatch = 'Passwords do not match';
   static const String emailRequired = 'Email is required';
   static const String passwordRequired = 'Password is required';

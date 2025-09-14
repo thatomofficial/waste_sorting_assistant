@@ -1,0 +1,242 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [ main, dev, qa ]
+  push:
+    branches: [ main, dev, qa ]
+
+jobs:
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.24.3'
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Verify formatting
+      run: dart format --output=none --set-exit-if-changed .
+
+    - name: Analyze project source
+      run: flutter analyze --fatal-infos
+
+    - name: Check for outdated dependencies
+      run: flutter pub outdated --exit-code
+
+  testing:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.24.3'
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Run unit tests
+      run: flutter test --coverage --reporter=expanded
+
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: coverage/lcov.info
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'zulu'
+        java-version: '17'
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.24.3'
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Build Android APK
+      run: flutter build apk --debug --verbose
+
+    - name: Upload APK artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: debug-apk
+        path: build/app/outputs/flutter-apk/app-debug.apk
+        retention-days: 5
+
+  build-ios:
+    name: Build iOS (No Code Signing)
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.24.3'
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Build iOS (no codesign)
+      run: flutter build ios --debug --no-codesign --verbose
+
+  security-scan:
+    name: Security Vulnerability Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.24.3'
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Run dependency vulnerability scan
+      run: |
+        # Check for known security vulnerabilities in dependencies
+        flutter pub deps --json > deps.json
+        # This would integrate with tools like OSV-Scanner or similar
+        echo "Security scan completed - implement OSV-Scanner integration"
+
+  performance-checks:
+    name: Performance and Size Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'zulu'
+        java-version: '17'
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.24.3'
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Build release APK for size analysis
+      run: flutter build apk --release --target-platform android-arm64
+
+    - name: Analyze APK size
+      run: |
+        APK_SIZE=$(stat -f%z build/app/outputs/flutter-apk/app-arm64-v8a-release.apk 2>/dev/null || stat -c%s build/app/outputs/flutter-apk/app-arm64-v8a-release.apk)
+        echo "APK Size: $((APK_SIZE / 1024 / 1024)) MB"
+
+        # Fail if APK is larger than 50MB
+        if [ $APK_SIZE -gt 52428800 ]; then
+          echo "❌ APK size exceeds 50MB limit"
+          exit 1
+        else
+          echo "✅ APK size is within acceptable limits"
+        fi
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.24.3'
+        channel: 'stable'
+        cache: true
+
+    - name: Get dependencies
+      run: flutter pub get
+
+    - name: Start iOS Simulator
+      run: |
+        xcrun simctl list devices available
+        xcrun simctl boot "iPhone 15" || true
+
+    - name: Run integration tests
+      run: |
+        if [ -d "integration_test" ]; then
+          flutter test integration_test/ --verbose
+        else
+          echo "No integration tests found - skipping"
+        fi
+
+  pr-validation-summary:
+    name: PR Validation Summary
+    runs-on: ubuntu-latest
+    needs: [code-quality, testing, build-android, build-ios, security-scan, performance-checks]
+    if: always()
+
+    steps:
+    - name: Check all jobs status
+      run: |
+        if [[ "${{ needs.code-quality.result }}" == "success" && \
+              "${{ needs.testing.result }}" == "success" && \
+              "${{ needs.build-android.result }}" == "success" && \
+              "${{ needs.build-ios.result }}" == "success" && \
+              "${{ needs.security-scan.result }}" == "success" && \
+              "${{ needs.performance-checks.result }}" == "success" ]]; then
+          echo "✅ All validation checks passed! PR is ready for review."
+        else
+          echo "❌ Some validation checks failed. Please review and fix issues."
+          exit 1
+        fi
